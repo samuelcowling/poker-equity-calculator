@@ -15,12 +15,9 @@ from streamlit.testing.v1 import AppTest
 
 
 def _set_card(at: AppTest, key: str, rank: str, suit: str) -> None:
-    # The suit selectbox only appears once the rank is set to something other
-    # than "None" (optional slots default to the placeholder), so a rerun is
-    # needed between setting rank and setting suit.
-    at.selectbox(key=f"{key}_rank").set_value(rank)
-    at.run(timeout=60)
-    at.selectbox(key=f"{key}_suit").set_value(suit)
+    # Each card slot is a single combined rank+suit selectbox keyed by `key`,
+    # with options being raw card notation strings (e.g. "Ah").
+    at.selectbox(key=key).set_value(f"{rank}{suit}")
 
 
 def _get_metric_values(at: AppTest) -> dict[str, float]:

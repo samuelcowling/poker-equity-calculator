@@ -8,7 +8,7 @@ from __future__ import annotations
 import plotly.graph_objects as go
 import streamlit as st
 
-from poker.cards import RANKS, SUIT_NAMES, SUITS, full_deck
+from poker.cards import full_deck
 from poker.equity import calculate_equity_curve
 
 # --- Page setup & theme -----------------------------------------------------
@@ -51,39 +51,94 @@ def _layout(fig, height=380, ytitle="", xtitle=""):
 
 # --- Card picker widgets -----------------------------------------------------
 NONE_LABEL = "—"
+SUIT_SYMBOL = {"s": "♠", "h": "♥", "d": "♦", "c": "♣"}
+ALL_CARD_STRINGS = [str(c) for c in full_deck()]
 
 
-def _card_picker(label: str, key: str, *, optional: bool) -> str | None:
-    """Render a rank + suit pair of selectboxes for one card slot.
+def _format_card(card_str: str) -> str:
+    if card_str == NONE_LABEL:
+        return NONE_LABEL
+    rank, suit = card_str[0], card_str[1]
+    return f"{rank}{SUIT_SYMBOL[suit]}"
+
+
+def _card_picker(container, label: str, key: str, *, optional: bool) -> str | None:
+    """Render a single combined rank+suit selectbox for one card slot (e.g. "A♥").
 
     Returns the card notation string (e.g. "Ah"), or None if the slot is
     optional and left unset.
     """
-    rank_options = ([NONE_LABEL] if optional else []) + list(RANKS)
-    col_rank, col_suit = st.columns(2)
-    rank = col_rank.selectbox(f"{label} rank", rank_options, key=f"{key}_rank", label_visibility="collapsed")
-    if rank == NONE_LABEL:
-        return None
-    suit_options = list(SUITS)
-    suit = col_suit.selectbox(
-        f"{label} suit",
-        suit_options,
-        key=f"{key}_suit",
-        label_visibility="collapsed",
-        format_func=lambda s: f"{s.upper()} ({SUIT_NAMES[s]})",
+    options = ([NONE_LABEL] if optional else []) + ALL_CARD_STRINGS
+    picked = container.selectbox(
+        label, options, key=key, label_visibility="collapsed", format_func=_format_card
     )
-    return f"{rank}{suit}"
+    return None if picked == NONE_LABEL else picked
 
 
 # --- Header -------------------------------------------------------------------
 st.title("\U0001F0CF Texas Hold'em Equity Calculator")
-st.markdown(
-    "Enter your hole cards, any known board cards, and the table size to see your "
-    "**win / tie / lose** probability against random opponents, plus how your equity "
-    "moved street-by-street as the actual board came out."
+
+# --- Sidebar: all inputs (hand, board, dead cards, table settings) ------------
+# Inputs live in the sidebar so they're always reachable while scrolling the
+# results, and the main panel can lead with the answer (win/tie/lose) instead
+# of burying it below several screens of input widgets.
+st.sidebar.header("Your hand")
+hh1, hh2 = st.sidebar.columns(2)
+hh1.caption("Card 1")
+hero_card_1 = _card_picker(hh1, "Hero card 1", "hero1", optional=False)
+hh2.caption("Card 2")
+hero_card_2 = _card_picker(hh2, "Hero card 2", "hero2", optional=False)
+
+st.sidebar.header("Community board")
+st.sidebar.caption("Fill in order — flop (all 3) before turn, turn before river.")
+bf1, bf2, bf3 = st.sidebar.columns(3)
+bf1.caption("Flop 1")
+flop_1 = _card_picker(bf1, "Flop 1", "flop1", optional=True)
+bf2.caption("Flop 2")
+flop_2 = _card_picker(bf2, "Flop 2", "flop2", optional=True)
+bf3.caption("Flop 3")
+flop_3 = _card_picker(bf3, "Flop 3", "flop3", optional=True)
+bt, br = st.sidebar.columns(2)
+bt.caption("Turn")
+turn_card = _card_picker(bt, "Turn", "turn", optional=True)
+br.caption("River")
+river_card = _card_picker(br, "River", "river", optional=True)
+
+flop_cards = [flop_1, flop_2, flop_3]
+flop_filled = [c for c in flop_cards if c is not None]
+
+board_errors: list[str] = []
+board: list[str] = []
+
+if 0 < len(flop_filled) < 3:
+    board_errors.append("The flop needs all 3 cards filled in (or leave all 3 blank).")
+elif len(flop_filled) == 3:
+    board.extend(flop_filled)
+    if turn_card is not None:
+        board.append(turn_card)
+        if river_card is not None:
+            board.append(river_card)
+    elif river_card is not None:
+        board_errors.append("River is filled in but turn is blank — fill in the turn first.")
+else:
+    if turn_card is not None or river_card is not None:
+        board_errors.append("Turn/river are filled in but the flop is blank — fill in the flop first.")
+
+st.sidebar.header("Dead cards")
+st.sidebar.caption("Cards known to be folded/burned — excluded from opponents' possible hands.")
+
+hero_cards_so_far = [c for c in (hero_card_1, hero_card_2) if c is not None]
+used_so_far = set(hero_cards_so_far) | set(board)
+dead_card_options = [c for c in ALL_CARD_STRINGS if c not in used_so_far]
+dead_cards = st.sidebar.multiselect(
+    "Dead cards",
+    options=dead_card_options,
+    default=[],
+    label_visibility="collapsed",
+    format_func=_format_card,
 )
 
-# --- Sidebar: table settings --------------------------------------------------
+st.sidebar.markdown("---")
 st.sidebar.header("Table settings")
 num_players = st.sidebar.slider(
     "Players at the table (incl. you)",
@@ -119,81 +174,13 @@ st.sidebar.caption(
     "side pots/all-ins, no deck variants."
 )
 
-# --- Hero hole cards -----------------------------------------------------------
-st.subheader("Your hole cards")
-hc1, hc2 = st.columns(2)
-with hc1:
-    st.caption("Card 1")
-    hero_card_1 = _card_picker("Hero card 1", "hero1", optional=False)
-with hc2:
-    st.caption("Card 2")
-    hero_card_2 = _card_picker("Hero card 2", "hero2", optional=False)
-
-# --- Board cards (flop / turn / river) -----------------------------------------
-st.subheader("Community board")
-st.caption(
-    "Leave later streets blank if they haven't happened yet — board cards must be filled in "
-    "order (flop before turn, turn before river)."
-)
-flop_col, turn_col, river_col = st.columns([3, 1, 1])
-with flop_col:
-    st.caption("Flop (3 cards)")
-    f1, f2, f3 = st.columns(3)
-    with f1:
-        flop_1 = _card_picker("Flop 1", "flop1", optional=True)
-    with f2:
-        flop_2 = _card_picker("Flop 2", "flop2", optional=True)
-    with f3:
-        flop_3 = _card_picker("Flop 3", "flop3", optional=True)
-with turn_col:
-    st.caption("Turn")
-    turn_card = _card_picker("Turn", "turn", optional=True)
-with river_col:
-    st.caption("River")
-    river_card = _card_picker("River", "river", optional=True)
-
-flop_cards = [flop_1, flop_2, flop_3]
-flop_filled = [c for c in flop_cards if c is not None]
-
-board_errors: list[str] = []
-board: list[str] = []
-
-if 0 < len(flop_filled) < 3:
-    board_errors.append("The flop needs all 3 cards filled in (or leave all 3 blank).")
-elif len(flop_filled) == 3:
-    board.extend(flop_filled)
-    if turn_card is not None:
-        board.append(turn_card)
-        if river_card is not None:
-            board.append(river_card)
-    elif river_card is not None:
-        board_errors.append("River is filled in but turn is blank — fill in the turn first.")
-else:
-    if turn_card is not None or river_card is not None:
-        board_errors.append("Turn/river are filled in but the flop is blank — fill in the flop first.")
-
-# --- Dead cards ------------------------------------------------------------
-st.subheader("Dead cards (optional)")
-st.caption("Mark any additional cards known to be out of play (folded/burned), separate from your hand and the board.")
-
-hero_cards_so_far = [c for c in (hero_card_1, hero_card_2) if c is not None]
-used_so_far = set(hero_cards_so_far) | set(board)
-all_card_strings = [str(c) for c in full_deck()]
-dead_card_options = [c for c in all_card_strings if c not in used_so_far]
-dead_cards = st.multiselect(
-    "Dead cards",
-    options=dead_card_options,
-    default=[],
-    label_visibility="collapsed",
-)
-
 # --- Validation -----------------------------------------------------------
 all_selected = hero_cards_so_far + board + dead_cards
 duplicates = {c for c in all_selected if all_selected.count(c) > 1}
 
 errors = list(board_errors)
 if len(hero_cards_so_far) != 2:
-    errors.append("Select both of your hole cards.")
+    errors.append("Select both of your hole cards in the sidebar.")
 if duplicates:
     errors.append(f"The same card was selected more than once: {', '.join(sorted(duplicates))}.")
 
@@ -238,14 +225,16 @@ with st.spinner("Crunching equity…"):
 result = curve[-1]
 
 # --- Results: win / tie / lose ----------------------------------------------
-st.markdown("---")
-st.subheader("Your equity")
-
 win_pct = result["win"] * 100
 tie_pct = result["tie"] * 100
 lose_pct = result["lose"] * 100
 
 street_so_far = STREET_LABELS[curve[-1]["street"]] if curve else "Preflop"
+hero_label = " ".join(_format_card(c) for c in hero_cards_so_far)
+board_label = " ".join(_format_card(c) for c in board) if board else "no board cards yet"
+st.subheader(f"Your equity — {hero_label}")
+st.caption(f"Board: {board_label}")
+
 m1, m2, m3 = st.columns(3)
 m1.metric("Win", f"{win_pct:.1f}%")
 m2.metric("Tie", f"{tie_pct:.1f}%")
