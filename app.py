@@ -8,6 +8,7 @@ from __future__ import annotations
 import plotly.graph_objects as go
 import streamlit as st
 
+from poker.advice import suggest_bet
 from poker.cards import full_deck
 from poker.equity import calculate_equity_curve
 
@@ -169,6 +170,23 @@ seed = st.sidebar.number_input(
 )
 
 st.sidebar.markdown("---")
+st.sidebar.header("Betting advice")
+pot_size = st.sidebar.number_input(
+    "Current pot size ($)",
+    min_value=0.0,
+    value=3.0,
+    step=0.5,
+    help="How much is in the pot right now. Used to turn the equity-tier bet "
+    "sizing into an actual dollar suggestion.",
+)
+loose_opponents = st.sidebar.checkbox(
+    "Opponents call a lot (typical home game)",
+    value=True,
+    help="Bumps value-bet sizing up further (calling stations pay off bigger "
+    "bets) and skips bluff suggestions (bluffing rarely works against them).",
+)
+
+st.sidebar.markdown("---")
 st.sidebar.caption(
     "v1 models opponents with uniformly random hole cards — no hand ranges, no "
     "side pots/all-ins, no deck variants."
@@ -255,6 +273,25 @@ bar = go.Figure(
 )
 _layout(bar, height=320, ytitle="Probability (%)")
 st.plotly_chart(bar, width="stretch")
+
+# --- Suggested bet size -------------------------------------------------------
+st.subheader("Suggested bet")
+total_equity_pct = win_pct + 0.5 * tie_pct
+advice = suggest_bet(total_equity_pct, pot_size, loose_opponents=loose_opponents)
+
+if advice.action == "check":
+    st.info(f"**Check** — {advice.tier} ({total_equity_pct:.0f}% total equity)")
+else:
+    st.success(
+        f"**Bet ${advice.suggested_amount:.2f}** "
+        f"({advice.pot_pct_low:.0f}-{advice.pot_pct_high:.0f}% of a ${pot_size:.2f} pot) "
+        f"— {advice.tier} ({total_equity_pct:.0f}% total equity)"
+    )
+st.caption(advice.rationale)
+st.caption(
+    "Heuristic sizing for a shallow (~20bb) home-game stack, not a GTO solve. "
+    "Uses total equity (win % + half of tie %) since a tie still returns half the pot."
+)
 
 # --- Equity curve across streets --------------------------------------------
 st.subheader("Equity curve")

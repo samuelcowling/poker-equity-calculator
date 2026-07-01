@@ -103,6 +103,62 @@ def check_duplicate_validation() -> None:
     print("PASSED: duplicate-card validation\n")
 
 
+def check_betting_advice_strong_hand() -> None:
+    print("=== Scenario: betting advice for a strong hand (river) ===")
+    at = AppTest.from_file("app.py")
+    at.run(timeout=60)
+    # Hero has the stone-cold nuts (quad aces) on this river - should be a
+    # clear "Strong value" bet, not a check.
+    _set_card(at, "hero1", "A", "s")
+    _set_card(at, "hero2", "A", "c")
+    _set_card(at, "flop1", "A", "h")
+    _set_card(at, "flop2", "A", "d")
+    _set_card(at, "flop3", "2", "c")
+    _set_card(at, "turn", "7", "d")
+    _set_card(at, "river", "9", "h")
+    at.slider[0].set_value(2)
+    at.run(timeout=60)
+    if at.exception:
+        for exc in at.exception:
+            print("EXCEPTION:", exc)
+        raise SystemExit("FAILED: strong-hand betting-advice scenario raised an exception")
+    if not at.success:
+        raise SystemExit("FAILED: expected a 'bet' recommendation (st.success) for quad aces")
+    advice_text = at.success[0].value
+    print("Advice shown:", advice_text)
+    if "Strong value" not in advice_text or "Bet $" not in advice_text:
+        raise SystemExit(f"FAILED: expected a 'Strong value' bet recommendation, got: {advice_text}")
+    print("PASSED: betting advice for a strong hand (river)\n")
+
+
+def check_betting_advice_weak_hand() -> None:
+    print("=== Scenario: betting advice for a weak hand (river) ===")
+    at = AppTest.from_file("app.py")
+    at.run(timeout=60)
+    # Hero has ace-high with no pair/draw on a river vs 8 opponents - should
+    # be a clear "check" recommendation, not a bet.
+    _set_card(at, "hero1", "A", "h")
+    _set_card(at, "hero2", "2", "d")
+    _set_card(at, "flop1", "5", "c")
+    _set_card(at, "flop2", "9", "s")
+    _set_card(at, "flop3", "J", "d")
+    _set_card(at, "turn", "3", "h")
+    _set_card(at, "river", "8", "c")
+    at.slider[0].set_value(9)
+    at.run(timeout=60)
+    if at.exception:
+        for exc in at.exception:
+            print("EXCEPTION:", exc)
+        raise SystemExit("FAILED: weak-hand betting-advice scenario raised an exception")
+    if not at.info:
+        raise SystemExit("FAILED: expected a 'check' recommendation (st.info) for weak ace-high vs 8 opponents")
+    advice_text = at.info[0].value
+    print("Advice shown:", advice_text)
+    if "Check" not in advice_text:
+        raise SystemExit(f"FAILED: expected a 'Check' recommendation, got: {advice_text}")
+    print("PASSED: betting advice for a weak hand (river)\n")
+
+
 def check_equity_curve_present() -> None:
     print("=== Scenario: equity curve rendered after river ===")
     at = AppTest.from_file("app.py")
@@ -123,5 +179,7 @@ if __name__ == "__main__":
     run_scenario("flop (AhKs on 2c7dQh, 4 players)", scenario_flop)
     run_scenario("river with dead cards (3 players, 2 dead cards)", scenario_river_dead_cards)
     check_duplicate_validation()
+    check_betting_advice_strong_hand()
+    check_betting_advice_weak_hand()
     check_equity_curve_present()
     print("All scenarios passed with zero exceptions.")
